@@ -14,9 +14,8 @@ export async function POST(req: NextRequest, res: NextResponse) {
   }
 
   try {
-
     const body = await req.json();
-    
+
     const {
       model,
       messages,
@@ -27,14 +26,29 @@ export async function POST(req: NextRequest, res: NextResponse) {
       ...restParams
     } = body;
 
+    // Validate required parameters
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return NextResponse.json(
+        { error: "Messages array is required" },
+        { status: 400 }
+      );
+    }
+
     const lastMessage = messages?.[messages.length - 1];
+    if (!lastMessage?.content) {
+      return NextResponse.json(
+        { error: "Last message must have content" },
+        { status: 400 }
+      );
+    }
+
     const prompt = await gemini.chat.completions.create({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-flash-lite",
       messages: [
         {
           role: "user",
           content: `
-        Create a prompt which can act as a prompt templete where I put the original prompt and it can modify it according to my intentions so that the final modified prompt is more detailed.You can expand certain terms or keywords.
+        Create a prompt which can act as a prompt template where I put the original prompt and it can modify it according to my intentions so that the final modified prompt is more detailed.You can expand certain terms or keywords.
         ----------
         PROMPT: ${lastMessage.content}.
         MODIFIED PROMPT: `,
@@ -51,7 +65,7 @@ export async function POST(req: NextRequest, res: NextResponse) {
 
     if (stream) {
       const completionStream = await gemini.chat.completions.create({
-        model: "gemini-2.5-flash",
+        model: "gemini-2.5-flash-lite",
         messages: modifiedMessage,
         max_tokens: max_tokens || 150,
         temperature: temperature || 0.7,
@@ -79,12 +93,12 @@ export async function POST(req: NextRequest, res: NextResponse) {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
+          Connection: "keep-alive",
         },
       });
     } else {
       const completion = await gemini.chat.completions.create({
-        model: "gemini-2.5-flash",
+        model: "gemini-2.5-flash-lite",
         messages: modifiedMessage,
         max_tokens: max_tokens || 150,
         temperature: temperature || 0.7,
@@ -94,9 +108,24 @@ export async function POST(req: NextRequest, res: NextResponse) {
     }
   } catch (e) {
     logger.error("Error in chat completions:", e);
-    return NextResponse.json({ 
-      error: e instanceof Error ? e.message : "Unknown error",
-      details: e 
-    }, { status: 500 });
+
+    if (e instanceof OpenAI.APIError) {
+      return NextResponse.json(
+        {
+          error: `API Error: ${e.message}`,
+          code: e.code,
+        },
+        { status: e.status || 500 }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        error: "Internal server error",
+        message: e instanceof Error ? e.message : "Unknown error",
+        details: e,
+      },
+      { status: 500 }
+    );
   }
-};
+}
